@@ -55,22 +55,16 @@
     background: var(--line);
     transition: background .3s;
   }
-  .orb.live { background: var(--accent); }
-  .orb.speaking { animation: pulse 1s ease-in-out infinite; background: var(--live); }
+  .orb.connecting { background: var(--muted); }
+  .orb.live { background: var(--accent); animation: pulse 2s ease-in-out infinite; }
   @keyframes pulse {
     0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.12); }
+    50% { transform: scale(1.07); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .orb.speaking { animation: none; }
+    .orb.live { animation: none; }
   }
 
-  label { display: block; text-align: left; font-size: .9rem; margin-bottom: 6px; color: var(--muted); }
-  input {
-    width: 100%; padding: 12px 14px; font-size: 1rem;
-    border: 1px solid var(--line); border-radius: 10px;
-    background: var(--bg); color: var(--text); margin-bottom: 16px;
-  }
   button {
     width: 100%; padding: 14px; font-size: 1rem; font-weight: 600;
     border: 0; border-radius: 10px; cursor: pointer;
@@ -90,74 +84,58 @@
   <h1>Sesli asistanı deneyin</h1>
   <p class="lead">Başlattığınızda mikrofon izni istenecek. Asistanla normal bir telefon görüşmesi gibi konuşabilirsiniz.</p>
 
-  <label for="code">Giriş kodu</label>
-  <input id="code" type="password" autocomplete="off" placeholder="Size verilen kod">
-
   <button id="btn">Konuşmayı başlat</button>
   <div id="status" role="status" aria-live="polite"></div>
 </main>
 
 <script type="module">
-  import { RetellWebClient } from "https://esm.sh/retell-client-js-sdk";
+  import { RetellClient } from "https://esm.sh/retell-client-js-sdk";
 
-  const API_URL = "/api/create-call";
+  // Retell panelinden aldığın PUBLIC key ve agent ID'yi yaz.
+  const PUBLIC_KEY = "public_key_2999955df9cd4899556c9";
+  const AGENT_ID = "agent_068cdcacd897a0435200337e5a";
 
-  const client = new RetellWebClient();
+  const client = new RetellClient({ key: PUBLIC_KEY });
   const btn = document.getElementById("btn");
   const orb = document.getElementById("orb");
   const statusEl = document.getElementById("status");
-  const codeEl = document.getElementById("code");
-  let inCall = false;
+  let call = null;
 
   function setStatus(text, isError = false) {
     statusEl.textContent = text;
     statusEl.className = isError ? "error" : "";
   }
 
-  function setCallUI(active) {
-    inCall = active;
-    btn.disabled = false;
-    btn.textContent = active ? "Görüşmeyi bitir" : "Konuşmayı başlat";
-    btn.classList.toggle("stop", active);
-    orb.classList.toggle("live", active);
-    if (!active) orb.classList.remove("speaking");
-    codeEl.disabled = active;
+  function setUI(state) {
+    orb.className = "orb" + (state === "idle" ? "" : " " + state);
+    btn.disabled = state === "connecting";
+    btn.classList.toggle("stop", state === "live");
+    btn.textContent = state === "live" ? "Görüşmeyi bitir" : "Konuşmayı başlat";
   }
 
-  client.on("call_started", () => { setCallUI(true); setStatus("Bağlandı, konuşabilirsiniz."); });
-  client.on("call_ended", () => { setCallUI(false); setStatus("Görüşme sona erdi."); });
-  client.on("agent_start_talking", () => orb.classList.add("speaking"));
-  client.on("agent_stop_talking", () => orb.classList.remove("speaking"));
-  client.on("error", (err) => {
-    console.error(err);
-    client.stopCall();
-    setCallUI(false);
-    setStatus("Bir hata oluştu. Mikrofon iznini kontrol edip tekrar deneyin.", true);
-  });
-
   btn.addEventListener("click", async () => {
-    if (inCall) { client.stopCall(); return; }
+    if (call && call.status !== "ended") {
+      await call.end();
+      return;
+    }
 
-    const code = codeEl.value.trim();
-    if (!code) { setStatus("Önce giriş kodunu girin.", true); return; }
-
-    btn.disabled = true;
+    setUI("connecting");
     setStatus("Bağlanıyor…");
 
-    try {
-      const res = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Bağlantı kurulamadı");
-
-      await client.startCall({ accessToken: data.accessToken });
-    } catch (e) {
-      btn.disabled = false;
-      setStatus(e.message, true);
-    }
+    call = client.createWebCall({
+      agent_id: AGENT_ID,
+      hooks: {
+        onStatus: (status) => {
+          if (status === "live") { setUI("live"); setStatus("Bağlandı, konuşabilirsiniz."); }
+        },
+        onEnd: () => { setUI("idle"); if (!statusEl.classList.contains("error")) setStatus("Görüşme sona erdi."); },
+        onError: (err) => {
+          console.error(err);
+          setUI("idle");
+          setStatus("Bağlantı kurulamadı. Mikrofon iznini kontrol edip tekrar deneyin.", true);
+        },
+      },
+    });
   });
 </script>
 </body>
